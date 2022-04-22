@@ -1,0 +1,16 @@
+#+title: Barcode Analysis of muPyV, This Time Combining All Stock Sequences Before Clustering
+#+author: Benni Goetz
+
+* Combining And Clustering Stock
+Compare =BC7_combined_stock_counts.tsv= and the CLI-based sum of the separate stock libraries:
+#+begin_src bash
+  paste ../stock_analysis/BC7_combined_stock_counts.tsv <(sort -k2,2 */BC7(bis|_)* | awk 'BEGIN {barcode = "volvo"} {if (NF == 2 && barcode != $2) {print(barcode, sum); barcode = $2; sum = $1} else {sum += $1}}' | tail -n +2) | awk '($2 != $4)'
+#+end_src
+Total of 36 lines are different. For some reason =read_table= chopped off the first digit in some of those lines. No idea how/why.
+
+** Create clustered combined stock
+Sum counts of the four stock runs as above, using command line, without going through R. Then run =starcode= using default message-passing algorithm and distance 3.
+#+begin_src bash
+  stock% sort -k2,2 ../barcodes_e0.1/*/BC7(bis|_)* | awk 'BEGIN {barcode = "blank"} {if (NF == 2 && barcode != $2) {print(barcode "\t" sum); barcode = $2; sum = $1} else {sum += $1}}' | tail -n +2 > BC7_combined_stock_counts.tsv
+  stock% starcode -d 3 -t 4 --print-clusters -i BC7_combined_stock_counts.tsv -o BC7_combined_stock_mp_L3_clusters.tsv
+#+end_src

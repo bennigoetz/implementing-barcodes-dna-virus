@@ -14,3 +14,67 @@ Sum counts of the four stock runs as above, using command line, without going th
   stock% sort -k2,2 ../barcodes_e0.1/*/BC7(bis|_)* | awk 'BEGIN {barcode = "blank"} {if (NF == 2 && barcode != $2) {print(barcode "\t" sum); barcode = $2; sum = $1} else {sum += $1}}' | tail -n +2 > BC7_combined_stock_counts.tsv
   stock% starcode -d 3 -t 4 --print-clusters -i BC7_combined_stock_counts.tsv -o BC7_combined_stock_mp_L3_clusters.tsv
 #+end_src
+
+* Getting FASTQ Sequence Of Raw Data
+Doing this on =cbig= since the raw data is there.
+
+In =barcodes_e0.1/cutadapt_fastqs/JA19161=:
+#+begin_src bash
+  parallel --jobs 4 "zcat -f {}/*.fastq* | cutadapt -n 2 -e 0.1 --untrimmed-output untrimmed_{/}.fastq -g GACTGTATTTCCTGGAAATTAATGTTTATTC...CAATTGAATAAACTGTGTATT -o {/}.fastq  - 2> cutadapt_{/}.log ::: ../../../raw_data/JA19161/*(/) &
+#+end_src
+In =barcodes_e0.1/cutadapt_fastqs/JA19375=:
+
+Take raw barcodes (extracted from =cutadapt=) and throw out barcodes with a min base quality below some threshold.
+For a single file:
+#+begin_src bash
+awk -v ORS='' '{if (NR % 4 == 0) {split($0, qualities, ""); n = asort(qualities); print(qualities[1] "\n")} else if (NR % 4 == 2) {print($0 "\t")}}' 10_10.fastq | awk '($2 >= 7)' > 10_10_qual_7.tsv
+#+end_src
+For all FASTQs. Do separately in JA19161 and JA19375 directories:
+#+begin_src bash
+for fastq in *.fastq; do awk -v ORS='' '{if (NR % 4 == 0) {split($0, qualities, ""); n = asort(qualities); print(qualities[1] "\n")} else if (NR % 4 == 2) {print($0 "\t")}}' $fastq | awk '($2 >= 7)' > ${fastq:r}_qual_gte7.tsv; done &
+#+end_src
+To count remaining barcodes:
+#+begin_src bash
+for qual_gte7 in *qual_gte7.tsv; do cut -f 1 $qual_gte7 | sort | uniq -c > ${qual_gte7:s/gte7.tsv/gte7_counts.txt/}; done
+#+end_src
+Do the same, but for PHRED score >= 30 trhis time. (Above is >= 20. Actually wait, it was 22, jeez I can't add 20 + 33.)
+#+begin_src bash
+for fastq in *.fastq; do awk -v ORS='' '{if (NR % 4 == 0) {split($0, qualities, ""); n = asort(qualities); print(qualities[1] "\n")} else if (NR % 4 == 2) {print($0 "\t")}}' $fastq | awk '($2 >= "?")' > ${fastq:r}_qual_gte30.tsv; done &
+#+end_src
+Counting:
+#+begin_src bash
+for qual_gte30 in *qual_gte30.tsv; do cut -f 1 $qual_gte30 | sort | uniq -c > ${qual_gte30:s/gte30.tsv/gte30_counts.txt/}; done
+#+end_src
+Fixing the silly mistake I made in translating PHRED score of 20 to "7":
+#+begin_src bash
+for fastq in *.fastq; do awk -v ORS='' '{if (NR % 4 == 0) {split($0, qualities, ""); n = asort(qualities); print(qualities[1] "\n")} else if (NR % 4 == 2) {print($0 "\t")}}' $fastq | awk '($2 >= "5")' > ${fastq:r}_qual_gte20.tsv; done &
+#+end_src
+Counting:
+#+begin_src bash
+for qual_gte20 in *qual_gte20.tsv; do cut -f 1 $qual_gte20 | sort | uniq -c > ${qual_gte20:s/gte20.tsv/gte20_counts.txt/}; done &
+#+end_src
+
+* Experiments With Taking Top 5000 Raw Reads
+** Cluster Top 5000 Raw Reads In Plasmids
+#+begin_src bash
+tail -n +2 BC7P_cutadapt_counts.txt | awk -v OFS=$'\t' '{print $2, $1}' | sort -k2,2nr | head -n 5000 > ../../stock/BC7P_top5k_counts.tsv
+#+end_src
+That =tail -n +2= is to get rid of the empty barcode.
+
+** Comparing Top 5k Reads With Clustered Reads
+#+begin_src bash
+  % comm -12 <(cut -f 1 BC7_combined_stock_top5k.tsv | sort) <(cut -f 1 BC7_sphere_combined_stock_L3_clusters.tsv | sort) | wc -l
+  1770
+% comm -12 <(cut -f 1 BC7_combined_stock_top5k.tsv | sort) <(cut -f 1 BC7_combined_stock_mp_L3_clusters.tsv | sort) | wc -l
+4098
+  % comm -12 <(cut -f 1 BC7P_top5k_counts.tsv | sort) <(cut -f 1 BC7P_mp_L3_clusters.tsv | sort) | wc -l
+  4553
+#+end_src
+
+* FastQC On Raw FASTQs
+
+#+begin_src bash
+    fastqc -t 8 -o qc/JA19375 raw_data/JA19375/**/*.fastq.gz 2> /dev/null & 
+  fastqc -t 8 -o qc/JA19161 raw_data/JA19161/**/*.fastq.gz 2> /dev/null &
+    multiqc -d JA19161/ JA19375/
+#+end_src

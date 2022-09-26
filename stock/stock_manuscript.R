@@ -542,6 +542,29 @@ ggsave('L3_cum99pct_viral_counts_in_plas_lig_upset.pdf',
        plot = p_L3_viral_counts_intersect_plas_lig_upset, 
        width = 10)
 
+## Combine the viral, ligated, plasmid UpSet plots into a patchwork
+
+ggsave('L3_cum99pct_plas_lig_viral_all_lt12bp_combo_upset.pdf',
+       path = '../plots/stock',
+       plot = (wrap_elements(p_L3_viral_counts_intersect_plas_lig_upset) /
+               wrap_elements(p_L3_plas_lig_viral_lt12bp_upset)) +
+           plot_layout(nrow = 2) +
+           plot_annotation(tag_levels = 'A'),
+       width = 10,
+       height = 14)
+
+ggsave('L3_cum99pct_plas_lig_viral_all_lt12bp_combo_upset.pdf',
+       path = '../plots/stock',
+       plot = wrap_plots(p_L3_viral_counts_intersect_plas_lig_upset,
+                         p_L3_plas_lig_viral_lt12bp_upset,
+                         ncol = 1) +
+      plot_annotation(tag_levels = c('A', '')),
+           ## plot_annotation(tag_levels = 'A') +
+           ## plot_layout(nrow = 6),
+       width = 10,
+       height = 14)
+
+
 ## Calculate counts, this replicates the code producing the intersection table.
 
 L3_cum99pct_viral_intersection_table = L3_cum99pct_plas_lig_viral_cluster_counts %>%
@@ -857,10 +880,14 @@ plasmid_cluster_counts %>%
     ggplot(., aes(dist)) +
     geom_histogram(binwidth = 1, fill = 'cornflowerblue') +
     labs(x = 'Levenshtein Distance',
-         y = 'Count of Pairwise Distances') +
+         y = 'Count of Pairwise Distances',
+         title = 'Plasmid Library') +
     scale_x_continuous(breaks = seq(0, 12, 4)) +
     scale_y_continuous(breaks = NULL) +
-        theme_minimal() -> p_plasmid_L3_distance_distribution
+    theme_minimal() +
+    theme(
+        axis.text = element_text(size = 10)
+        ) -> p_plasmid_L3_distance_distribution
 
 ggsave('plasmid_L3_cum_pct_99_distance_distribution.pdf',
        path='../plots/stock',
@@ -1021,12 +1048,77 @@ distance_between_sphere_L3_stock_barcodes = adist(sphere_L3_stock_barcodes) %>%
     as_tibble() %>%
     pivot_longer(-barcode1, names_to = 'barcode2', values_to = 'distance')
 
+## -- Distance To Nearest Stock Barcode -----------------------------------
+
+distance_between_stock_barcodes %>%
+    filter(barcode1 < barcode2) %>%
+    group_by(barcode1) %>%
+    summarize(min_dist = min(distance)) %>%
+    arrange(min_dist) %>%
+    count(min_dist) 
+
+## L3 clustered
+stock_L3_cum99pct_min_dists = L3_cum99pct_plas_lig_viral_cluster_counts %>%
+    filter(library == 'Viral') %>%
+    pull(barcode) %>%
+    set_names(., nm = .) %>%
+    adist(.) %>%
+    as.data.frame() %>%
+    rownames_to_column('barcode1') %>%
+    as_tibble() %>%
+    pivot_longer(- barcode1, names_to = 'barcode2', values_to = 'distance') %>%
+    filter(barcode1 < barcode2) %>%
+    group_by(barcode1) %>%
+    summarize(min_dist = min(distance)) %>%
+    count(min_dist) %>%
+    arrange(min_dist)
+
+stock_raw_rank_20k_mid_dists = stock_raw_barcode_ranking %>%
+    filter(ranking <= 20000) %>%    # Can't allocate a vector big enough for all barcodes
+    pull(barcode) %>%
+    set_names(., nm = .) %>%
+    adist(.) %>%
+    as.data.frame() %>%
+    rownames_to_column('barcode1') %>%
+    as_tibble() %>%
+    pivot_longer(- barcode1, names_to = 'barcode2', values_to = 'distance') %>%
+    filter(barcode1 < barcode2) %>%
+    group_by(barcode1) %>%
+    summarize(min_dist = min(distance)) %>%
+    count(min_dist) %>%
+    arrange(min_dist)
+
+stock_combined_raw_L3_cum99pct_min_dists =
+    bind_rows(mutate(stock_L3_cum99pct_min_dists, barcodes = 'L3_cum99pct', pct = n / sum(n)),
+              mutate(stock_raw_rank_20k_mid_dists, barcodes = 'Raw_20k', pct = n / sum(n))
+        )
+
+ggplot(stock_combined_raw_L3_cum99pct_min_dists,
+       aes(x = min_dist)) +
+    geom_col(aes(y = n), fill = 'cornflowerblue', position = 'identity') +
+    facet_wrap(vars(barcodes)) +
+    theme_minimal() -> p_min_dists_raw_L3_cum99pct
+
+ggsave('min_dists_raw_20k_L3_cum99pct_bar.pdf',
+       path = '../plots/stock',
+       plot = p_min_dists_raw_L3_cum99pct)
+
+ggplot(stock_combined_raw_L3_cum99pct_min_dists,
+       aes(x = min_dist)) +
+    geom_col(aes(y = pct), fill = 'cornflowerblue', position = 'identity') +
+    facet_wrap(vars(barcodes)) +
+    theme_minimal() -> p_min_dists_raw_L3_cum99pct_pct
+
+ggsave('min_dists_raw_20k_L3_cum99pct_pct_bar.pdf',
+       path = '../plots/stock',
+       plot = p_min_dists_raw_L3_cum99pct_pct)
+
 
 # --- Simulate Pairwise Distance Of Random 12mers -------------------------
 
 set_of_distances_within_3 = c()
 
-for (trial in 1:20) {
+## for (trial in 1:20) {
 
 random_bcs = c()
 for (i in 1:5000) {
@@ -1035,11 +1127,24 @@ for (i in 1:5000) {
 }
 random_bcs = set_names(random_bcs, nm = random_bcs)
 
+sample_bc_vector <- function(bc_vector, num_samples, num_iterations, prob = NULL) {
+    print(num_iterations)
+    length_of_bc_samples = vector('integer', num_iterations)
+    for (i in 1:num_iterations) {
+        print(i)
+        sampled_bcs = sample(bc_vector, num_samples, replace = FALSE, prob)
+        print(sampled_bcs)
+        length_of_bc_samples[i] = length(sampled_bcs)
+        return(length_of_bc_samples)
+        }
+}
+
 random_12mer_pairwise = adist(random_bcs) %>%
     as.data.frame() %>%
     rownames_to_column('barcode1') %>%
     as_tibble() %>%
     pivot_longer(-barcode1, names_to = 'barcode2', values_to = 'distance')
+    ## Maybe need barcode1 < barcode2 or something so there's no double-counting pairs
 
 distances_within_3 = random_12mer_pairwise %>%
     filter(distance > 0 & distance <= 3) %>%
@@ -1048,6 +1153,268 @@ distances_within_3 = random_12mer_pairwise %>%
 
 set_of_distances_within_3 = c(set_of_distances_within_3, distances_within_3)
 
-}
 
 average_of_pct_distances_within_3 = mean(set_of_distances_within_3) / 25000000
+
+random_12mer_pairwise %>%
+    filter(barcode1 < barcode2) %>%
+    ggplot(., aes(distance)) +
+    geom_histogram(binwidth = 1, fill = 'darkgoldenrod3') +
+    labs(x = 'Levenshtein Distance',
+         y = 'Count of Pairwise Distances',
+         title = '5000 Random 12mers') +
+    scale_x_continuous(breaks = seq(0, 12, 4)) +
+    scale_y_continuous(breaks = NULL) +
+    theme_minimal() +
+    theme(
+        axis.text = element_text(size = 10)
+    ) -> p_random5k_distance_distribution
+
+ggsave('random5k_distance_distribution.pdf',
+       path='../plots/stock',
+       plot = p_random5k_distance_distribution)
+
+# Combine random distance distribution with the plasmid distribution with L3/cutoff
+
+p_plasmid_L3_distance_and_random5k_distance_distribution =
+    p_plasmid_L3_distance_distribution +
+    p_random5k_distance_distribution +
+    plot_annotation(tag_levels = 'A') &
+    theme(axis.text = element_text(size = 12),
+          axis.title = element_text(size = 12)
+          )
+
+ggsave('plasmid_and_5krandom_distance_distribution.pdf',
+       path = '../plots/stock',
+       plot = p_plasmid_L3_distance_and_random5k_distance_distribution,
+       width = 14)
+
+
+                                theme_minimal() +
+                                theme(panel.spacing.y = unit(2, "lines"),
+                                      ## axis.title = element_blank(),
+                                      ## axis.title.x = element_blank(),
+          axis.text.x = element_text(size = 12),
+          ## axis.title.y = element_text(vjust = 2, size = 12),
+          ## axis.title.x = element_text(vjust = -1, size = 12),
+          strip.text = element_text(size = 12),
+                                      axis.title.y = element_text(vjust = 10, size = 12),
+                                      axis.text.y = element_text(family = 'IBM_Plex_Mono'),
+                                      axis.title.x = element_text(vjust = -1, size = 12),
+                                      legend.text = element_text(family = 'IBM_Plex_Mono'),
+                                      legend.position = 'none'
+                                )
+
+    theme(plot.subtitle = element_blank(),
+          plot.tag = element_text(size = 12)) ->
+
+# --- Simulate Raw Stock Barcodes With Clustering -------------------------
+
+## Saving for later
+## stock_raw_barcode_ranking %>% filter(ranking <= 5000) %>% mutate(pct = count / sum(count))
+## > stock_raw_barcode_ranking %>% filter(ranking <= 5000) %>% pull(count) %>% sum()
+
+expand_L_dist <- function(kmer, L) {
+
+    if (L == 0) {
+        return(kmer)
+        }
+
+    original_kmer = kmer
+    edit_dist_L = FALSE
+
+    # while loop is to verify that edited kmer is actually L away from original kmer
+    while (kmer == original_kmer) {
+        for (i in 1:L) {
+            nucs = c('A', 'C', 'G', 'T')
+            length_kmer = str_length(kmer)
+            ## print('kmer:', kmer)
+            ## print(paste('length kmer:', length_kmer))
+
+            edit = sample(c('insert', 'delete', 'sub'), 1)
+
+            if (edit == 'insert') {
+                ## print('case_insert')
+                pos_insert = sample.int(n = length_kmer + 1, size = 1) - 1
+                insert_nuc = sample(nucs, 1)
+                kmer = paste0(str_sub(kmer, 0, pos_insert), insert_nuc, str_sub(kmer, pos_insert + 1))
+                ## print(kmer)
+            } else if (edit == 'delete') {
+                ## print('case_delete')
+                pos_del = sample.int(n = length_kmer, size = 1)
+                kmer = paste0(str_sub(kmer, 0, pos_del-1), str_sub(kmer, pos_del+1))
+                ## print(kmer)
+            } else if (edit == 'sub') {
+                ## print('case_sub')
+                pos_sub = sample.int(n = length_kmer, size = 1)
+                substring(kmer, pos_sub, pos_sub) = sample(nucs[! nucs %in% substring(kmer, pos_sub, pos_sub)], 1)
+                # ^ Complicated expression inside sample is to avoid substituting a letter with itself
+                ## print(kmer)
+            }
+            ## print(kmer)
+        }
+        ## edit_dist_L = ! (adist(original_kmer, kmer)[1, 1] == L)
+    }
+    return(kmer)
+}
+
+add_N_error_bcs_for_L <- function(barcode, N, L) {
+    # The <<- is for assignment to global variables, which R discourages
+    # But this seems like the most memory-efficient way of dealing with something
+    # that probably requires a lot of memory
+
+    ## if (N == 0) {return(NULL)}
+
+    for (i in 1:N) {
+        if (N == 0) {break}
+        ## print(N)
+        ## print(L)
+        error_bc = expand_L_dist(barcode, L)
+        
+        if (error_bc %in% names(random_w_error_counts)) {
+            ## print('in name exists')
+            random_w_error_counts[error_bc] <<- random_w_error_counts[error_bc] + 1
+            }
+        else {
+                ## print('name doesnot exist')
+            random_w_error_counts[error_bc] <<- 1
+            }
+        }
+    ## return(count_list)
+    }
+
+random_w_error_counts = c()
+
+random_bc_counts = tibble(barcode = random_bcs,
+                          count = top_n(stock_raw_counts, 5000, wt = count) %>%
+                              arrange(desc(count)) %>%
+                              pull(count)
+                          )
+
+random_bcs_w_errors_wo0 = one_plasmid_L_dist_pcts %>%
+    select(distance, pct_of_1P) %>%
+    filter(distance > 0) %>%
+    expand_grid(., random_bc_counts) %>%
+    select(barcode, count, distance, pct_of_1P) %>%  # these two lines purely for aesthetics
+    arrange(desc(count)) %>%
+    mutate(count_to_generate = floor(count * pct_of_1P))
+    
+## for (i in 1:nrow(head(random_bcs_w_errors_wo0)) {
+##     print(random 
+##     }
+
+# Add error bcs to random_w_error_counts vector, exclude the original barcodes, as we can just add their numbers later.
+for (i in 1:nrow(random_bcs_w_errors_wo0)) {
+    add_N_error_bcs_for_L(random_bcs_w_errors_wo0$barcode[i],
+                          random_bcs_w_errors_wo0$count_to_generate[i],
+                          random_bcs_w_errors_wo0$distance[i])
+    }
+
+for (i in 1:nrow(random_bc_counts)) {
+    if (random_bc_counts$barcode[[i]] %in% names(random_w_error_counts)) {
+        random_w_error_counts[random_bc_counts$barcode[[i]]] = random_w_error_counts[random_bc_counts$barcode[[i]]] + random_bc_counts$count[[i]]
+        }
+    else {
+        random_w_error_counts[random_bc_counts$barcode[[i]]] = random_bc_counts$count[[i]]
+        }
+    }
+
+enframe(random_w_error_counts, name = 'barcode', value = 'count') %>%
+    write_tsv('simulations/raw_Sep12.tsv', col_names = FALSE)
+
+# Starcode was run, reading in results
+L3_random_w_error_counts = read_tsv('simulations/L3_clustered_Sep12.tsv',
+                                    col_names=c('barcode', 'count', 'elements')) %>%
+    select(- elements)
+
+L2_random_w_error_counts = read_tsv('simulations/L2_clustered_Sep12.tsv',
+                                    col_names=c('barcode', 'count', 'elements')) %>%
+    select(- elements)
+
+# Count overlap of random 5k errors and L3 clustering of the generated errors
+intersect(pull(L3_random_w_error_counts, barcode), pull(random_bc_counts, barcode)) %>% length()
+
+intersect(pull(L2_random_w_error_counts, barcode), pull(random_bc_counts, barcode)) %>% length()
+
+L3_cum99pct_random_w_error_counts = L3_random_w_error_counts %>%
+    mutate(total = sum(count),
+           pct = count / total,
+           cum_pct = cumsum(pct)) %>%
+    filter(cum_pct <= 0.99) 
+
+intersect(pull(L3_cum99pct_random_w_error_counts, barcode), pull(random_bc_counts, barcode)) %>% length()
+
+# Get one_plasmid_counts from the controls code, transferred via RDS
+one_plasmid_counts = readRDS('one_plasmid_counts.rds')
+
+ten_control_barcodes = c(BC7_1='TCACAGGGGTAA', BC7_2='ACAAGACCGGAA',
+                         BC7_3='ATATAGAGCTGT', BC7_4='ACATACCTGCTA',
+                         BC7_5='GTGTCAGGCACA', BC7_6='TGCCACTCTAGC',
+                         BC7_8='CTCGATTCACTC', BC7_9='GAACCCGTGGAA',
+                         BC7_12='CTGTATATTTTA', BC7_15='GAAACCATGACA')
+
+raw_BC1_103_bcs = one_plasmid_counts %>%
+    filter(cluster == 'Raw' & library == 'BC1_103') %>%
+    pull(barcode)
+
+L_dist_raw_BC1_103_BC7_1 = adist(ten_control_barcodes[['BC7_1']], raw_BC1_103_bcs)
+
+one_plasmid_L_dist_pcts = one_plasmid_counts %>%
+    filter(cluster == 'Raw' & library == 'BC1_103') %>%
+    add_column(distance = as.vector(L_dist_raw_BC1_103_BC7_1)) %>%
+    filter(distance <= 10) %>%
+    group_by(distance) %>%
+    summarize(count = sum(count)) %>%
+    mutate(pct_of_1P = count / (filter(., distance == 0) %>% pull(count)))
+
+# --- Experiment With Taking Top N Barcodes -------------------------------
+
+plasmid_cluster_counts %>%
+    filter(cluster == 'Raw' & barcode != '') %>%
+    top_n(5000, count) %>%
+    ## mutate(total = sum(count),
+    ##        pct = count /total,
+    ##        cum_pct = cumsum(pct)) %>%
+    ## filter(cum_pct <= 0.99) %>%
+    pull(barcode) %>%
+    set_names(., nm=.) %>%
+    adist() %>%
+    as.data.frame() %>%
+    rownames_to_column('stock_1') %>%
+    as_tibble() %>%
+    pivot_longer(-stock_1, names_to='stock_2', values_to='dist') %>%
+    filter(stock_1 < stock_2) %>%
+    ggplot(., aes(dist)) +
+    geom_histogram(binwidth = 1, fill = 'goldenrod') +
+    labs(x = 'Levenshtein Distance',
+         y = 'Count of Pairwise Distances') +
+    scale_x_continuous(breaks = seq(0, 12, 4)) +
+    scale_y_continuous(breaks = NULL) +
+        theme_minimal() -> p_top5k_plasmid_Raw_distance_distribution
+
+ggsave('top5k_plasmid_Raw_distance_distribution.pdf',
+       path='../plots/stock',
+       plot = p_top5k_plasmid_Raw_distance_distribution)
+
+## Virtually identical plot to L3 cumulative 99% plot
+
+
+# --- Similarity Between Plasmid And Stock --------------------------------
+
+# Shamelessly stolen from https://stats.stackexchange.com/questions/31565/compute-a-cosine-dissimilarity-matrix-in-r
+# But modified to handle the incoming table has samples as columns and observations as rows
+cosine_similarity <- function(table) {
+    matrix = as.matrix(table)
+    sim = t(t(matrix) / sqrt(colSums(matrix * matrix)))
+    return(t(sim) %*% sim)
+    }
+
+plasmid_cluster_counts %>%
+    filter(cluster == 'Raw' & barcode != '') %>%
+    mutate(library = 'Plasmid') %>%
+    select(library, barcode, count) %>%
+    bind_rows(mutate(stock_raw_counts, library = 'Stock')) %>% 
+    pivot_wider(names_from = library, values_from = count, values_fill = 0) %>%
+    column_to_rownames(var = 'barcode') %>%
+    cosine_similarity()
+
